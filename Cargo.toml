@@ -1,0 +1,12 @@
+[package]
+name = "create_wireguard_with_v2rayn_rust"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rand = "0.8.5"
+lazy_static = "1.4.0"
+regex = "1.10.4"
+urlencoding = "2.1.3"
