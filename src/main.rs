@@ -123,6 +123,7 @@ impl IpGenerator {
             .map(|i| Ipv4Addr::from(u32::from(network) + i))
             .collect()
     }
+
     // 生成随机IPv6地址（指定数量）
     fn generate_random_ipv6_addresses(cidr: &str, max_count: usize) -> Vec<Ipv6Addr> {
         let (ip, mask) = IpGenerator::parse_ipv6_cidr(cidr).expect("Invalid IPv6 CIDR");
@@ -135,6 +136,7 @@ impl IpGenerator {
         }
         ip_range
     }
+
     // 解析IPv4 CIDR(判断是否为有效的IPv4 CIDR)
     fn parse_ipv4_cidr(cidr: &str) -> Result<(Ipv4Addr, u32), &'static str> {
         let parts: Vec<&str> = cidr.split('/').collect();
@@ -145,6 +147,7 @@ impl IpGenerator {
         let mask: u32 = parts[1].parse().map_err(|_| "Invalid subnet mask")?;
         Ok((network, mask))
     }
+
     // 解析IPv6 CIDR(判断是否为有效的IPv6 CIDR)
     fn parse_ipv6_cidr(cidr: &str) -> Result<(Ipv6Addr, u8), &'static str> {
         let parts: Vec<&str> = cidr.split('/').collect();
@@ -166,6 +169,7 @@ impl InsertIPS {
             ips.insert(ip.to_string());
         }
     }
+
     // 生成IPv6地址并插入到ips HashSet中
     fn generate_and_insert_ipv6_addresses(cidr: &str, ips: &mut HashSet<String>) {
         print!(
@@ -179,6 +183,7 @@ impl InsertIPS {
             ips.insert(ip.to_string());
         }
     }
+    
     // 获取用户输入
     fn user_input() -> String {
         let mut input = String::new();
