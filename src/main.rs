@@ -1,8 +1,10 @@
+use csv::ReaderBuilder;
 use lazy_static::lazy_static;
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use regex::Regex;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    error::Error,
     fs::{self, File},
     io::{self, BufRead, BufReader, Write},
     net::{Ipv4Addr, Ipv6Addr},
@@ -11,12 +13,13 @@ use std::{
 use urlencoding::encode;
 
 lazy_static! {
-    static ref IPV4_WITH_PORT_RE: Regex = Regex::new(r#"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$"#).unwrap();
-    static ref IPV6_WITH_PORT_RE: Regex = Regex::new(r#"^\[([0-9a-fA-F:]+)\]:([0-9]{1,5})$"#).unwrap();
-    static ref IPV4_CIDR_RE: Regex = Regex::new(r#"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2})$"#).unwrap();
-    static ref IPV6_CIDR_RE: Regex = Regex::new(r#"^(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])$|^\s*((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))"#
-    ).unwrap();
-    static ref IPV4_REGEX: Regex = Regex::new(r#"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"#).unwrap();
+    static ref DOMAIN_RE: Regex = Regex::new(r"\b^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:\.[a-zA-Z]{2})?$\b").unwrap(); // 匹配域名(子域名)
+    static ref DOMAIN_WITH_PORT_RE: Regex = Regex::new(r"\b^(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]\:[0-9]{1,5}$\b").unwrap(); // 匹配带端口的域名(子域名)
+    static ref IPV4_WITH_PORT_RE: Regex = Regex::new(r#"\b^(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$\b"#).unwrap();
+    static ref IPV6_WITH_PORT_RE: Regex = Regex::new(r#"^\[([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]:[0-9]{1,5}$"#).unwrap();
+    static ref IPV4_CIDR_RE: Regex = Regex::new(r#"\b^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2})$\b"#).unwrap();
+    static ref IPV6_CIDR_RE: Regex = Regex::new(r#"^(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])$|^\s*((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))"#).unwrap();
+    static ref IPV4_REGEX: Regex = Regex::new(r#"\b^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$\b"#).unwrap();
     static ref IPV6_REGEX: Regex = Regex::new(r#"^(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:))$"#).unwrap();
 }
 
@@ -27,10 +30,27 @@ fn main() {
     let ips_or_cidrs = read_file_lines(filename);
     let wireguard_parameters = read_wireguard_key_parameters("WireGuard.conf");
 
-    // 存放单独ip的集合(包括IPv4和IPv6地址)
+    // 存放没有端口的IP和域名
     let mut ips = HashSet::new();
-    // 已经有端口的ip集合
-    let mut ip_with_port_hashset = HashSet::new();
+    // 存放有端口的IP和域名
+    let mut ip_with_port_vector: Vec<String> = Vec::new();
+
+    // 读取当前目录中所有csv文件，并将csv文件第一列IP:PORT值存入ip_with_port_vector中
+    match find_csv_files_in_current_directory() {
+        Ok(csv_files) => {
+            // 使用 for 循环迭代 csv_files 中的文件名
+            for csv_file in csv_files.iter() {
+                // 读取csv第一列的IP:PORT值（所有值）
+                match read_csv_first_column_values(csv_file) {
+                    Ok(values) => {
+                        ip_with_port_vector.extend(values);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
 
     let ports_vec: Vec<u16> = vec![
         500, 854, 859, 864, 878, 880, 890, 891, 894, 903, 908, 928, 934, 939, 942, 943, 945, 946,
@@ -41,12 +61,18 @@ fn main() {
     let selected_ports = select_ports(ports_vec); // 选择端口
 
     for ipaddr in &ips_or_cidrs {
-        if IPV4_WITH_PORT_RE.is_match(ipaddr) {
+        if DOMAIN_WITH_PORT_RE.is_match(ipaddr) {
+            // 判断有端口的域名
+            ip_with_port_vector.push(ipaddr.to_string());
+        } else if DOMAIN_RE.is_match(ipaddr) {
+            // 判断没有端口的域名
+            ips.insert(ipaddr.to_string());
+        } else if IPV4_WITH_PORT_RE.is_match(ipaddr) {
             // 判断是带端口的IPv4地址
-            ip_with_port_hashset.insert(ipaddr.to_string());
+            ip_with_port_vector.push(ipaddr.to_string());
         } else if IPV6_WITH_PORT_RE.is_match(ipaddr) {
             // 判断是带端口的IPv6地址
-            ip_with_port_hashset.insert(ipaddr.to_string());
+            ip_with_port_vector.push(ipaddr.to_string());
         } else if IPV4_REGEX.is_match(ipaddr) {
             // 先使用正则判断是否为IPv4地址，然后将字符串解析为IPv4地址，成功就插入到ips HashSet中
             if let Ok(ipv4) = ipaddr.parse::<Ipv4Addr>() {
@@ -64,21 +90,18 @@ fn main() {
             // 判断是IPv6 CIDR，生成CIDR范围内随机IPv6地址并插入到ips HashSet中
             InsertIPS::generate_and_insert_ipv6_addresses(&ipaddr, &mut ips);
         } else {
-            // 其他情况，认为是域名，无法判断是否有端口，留到添加端口的函数中处理
-            ips.insert(ipaddr.to_string());
+            // 省略不合法的字符串
         }
     }
 
     // 为IP地址添加端口
     let ip_with_port_generate = add_port(&ips, &selected_ports);
 
-    let mut ip_with_port_vec = ip_with_port_hashset.clone();
-
-    // 合并到ip_with_port_vec中
-    ip_with_port_vec.extend(ip_with_port_generate);
+    // 合并到ip_with_port_vector中
+    ip_with_port_vector.extend(ip_with_port_generate);
 
     // 构建wireguard节点的链接
-    let links_results = build_wireguard_links(wireguard_parameters, ip_with_port_vec);
+    let links_results = build_wireguard_links(wireguard_parameters, ip_with_port_vector);
 
     // 显示100个链接（效果）
     display_100_links(links_results.clone());
@@ -308,7 +331,7 @@ fn read_file_lines(filename: &str) -> Vec<String> {
     lines.into()
 }
 
-fn write_to_file(set_contents: HashSet<String>, output_file: &str) {
+fn write_to_file(set_contents: Vec<String>, output_file: &str) {
     // 将 HashSet 中的所有字符串用换行符拼接成一个大字符串
     let contents = set_contents
         .iter()
@@ -336,8 +359,8 @@ fn write_to_file(set_contents: HashSet<String>, output_file: &str) {
 
 fn build_wireguard_links(
     wireguard_parameters: HashMap<String, String>,
-    ip_with_port_vec: HashSet<String>,
-) -> HashSet<String> {
+    ip_with_port_vec: Vec<String>,
+) -> Vec<String> {
     let default = &"".to_string();
     let default_mtu = &"1420".to_string();
     // 获取wireguard配置文件中的参数
@@ -347,7 +370,7 @@ fn build_wireguard_links(
     let reserved = wireguard_parameters.get("Reserved").unwrap_or(default);
     let mtu = wireguard_parameters.get("MTU").unwrap_or(default_mtu);
     // 接收生成wireguard链接的结果
-    let mut results: HashSet<String> = HashSet::new();
+    let mut results: Vec<String> = Vec::new();
     for ip_with_port in ip_with_port_vec {
         let links;
         // 是""字符的，就走""分支,否则走_分支。
@@ -376,20 +399,17 @@ fn build_wireguard_links(
                 );
             }
         }
-        results.insert(links);
+        results.push(links);
     }
 
     results
 }
 
-fn display_100_links(hash_set: HashSet<String>) {
-    // 转换HashSet为向量
-    let vec: Vec<&String> = hash_set.iter().collect();
-
+fn display_100_links(hash_set: Vec<String>) {
     println!("\n{:-<43} WireGuard节点如下: {:-<43}", "", "");
 
     // 返回前100个元素，不足100个就返回全部
-    let sliced_vec: Vec<&String> = vec.iter().take(100).cloned().collect();
+    let sliced_vec: Vec<&String> = hash_set.iter().take(100).collect();
 
     // 由迭代器产生元素的索引及其引用的元组，这里最多100个索引及其引用
     for (_index, item) in sliced_vec.iter().enumerate() {
@@ -402,4 +422,57 @@ fn display_100_links(hash_set: HashSet<String>) {
     } else {
         println!("{:-<106}", "");
     }
+}
+
+// 读取csv文件中第一列的IP:PORT(除了第一行标题)
+fn read_csv_first_column_values(filename: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    // 检查文件是否存在
+    if !fs::metadata(filename)?.is_file() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "File not found").into());
+    }
+    // 打开CSV文件
+    let file = File::open(filename)?;
+    // 创建CSV读取器
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
+    // 创建一个Vec来存储第一列的内容
+    let mut first_column_values: Vec<String> = Vec::new();
+    // 逐行读取CSV文件
+    for result in rdr.records() {
+        // 读取每一行的记录
+        let record = result?;
+        // 获取第一列的值
+        if let Some(value) = record.get(0) {
+            // 再次确定读取到数据是否符合IP:PORT格式
+            if IPV4_WITH_PORT_RE.is_match(value)
+                || IPV6_WITH_PORT_RE.is_match(value)
+                || DOMAIN_WITH_PORT_RE.is_match(value)
+            {
+                first_column_values.push(value.to_owned());
+            }
+        }
+    }
+    Ok(first_column_values)
+}
+
+// 获取当前目录下的所有 CSV 文件路径
+fn find_csv_files_in_current_directory() -> Result<Vec<String>, Box<dyn Error>> {
+    // 获取当前目录的文件迭代器
+    let current_dir = fs::read_dir(".")?;
+    // 创建一个 Vec 来存储 CSV 文件的路径
+    let mut csv_files: Vec<String> = Vec::new();
+    // 遍历当前目录下的文件
+    for entry in current_dir {
+        let entry = entry?;
+        let path = entry.path();
+        // 检查文件是否是 CSV 文件
+        if let Some(extension) = path.extension() {
+            if extension == "csv" {
+                // 将 CSV 文件的路径添加到 Vec 中
+                if let Some(file_name) = path.to_str() {
+                    csv_files.push(file_name.to_string());
+                }
+            }
+        }
+    }
+    Ok(csv_files)
 }
